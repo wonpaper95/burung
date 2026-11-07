@@ -105,7 +105,7 @@ footer{color:var(--dim);font-size:13px;text-align:center}footer a{color:var(--di
 const even = (n) => Array.from({length:n}, (_, i) => i * 720 / n);
 const ENGINES = {
   // 6.5L 65° V12, 60° 간격 균등 점화, 8,900rpm, 7단 DCT. 높고 금속성 있는 고회전 비명 쪽으로 튜닝
-  f812:  {name:'812 슈퍼패스트', sub:'6.5L V12 자연흡기', angles:even(12), amps:[1,.97,1,.96,1,.98,1,.97,1,.96,1,.98], idle:1000, redline:8900, decayMs:1.1, rough:.22, jitter:.035, timing:.012, pipeMs:3, fb:.5, res:[[260,3,.45],[880,4,.45],[1750,3,.35],[3200,2,.2]], dry:.45, bright:8000, drive:2.2, pops:.9, turbo:false, gears:7, vmax:340, gearKmh:[82,115,155,196,245,300,340]},
+  f812:  {name:'812 슈퍼패스트', sub:'6.5L V12 자연흡기', angles:even(12), amps:[1,.97,1,.96,1,.98,1,.97,1,.96,1,.98], idle:1000, redline:8900, decayMs:.5, rough:.28, jitter:.035, timing:.012, pipeMs:3, fb:.5, res:[[260,3,.3],[880,4,.45],[1750,3,.5],[3200,2,.45]], dry:.45, bright:16000, drive:2.9, presence:1.6, pops:1.8, turbo:false, gears:7, vmax:340, gearKmh:[82,115,155,196,245,300,340]},
   v8m:   {name:'V8 머슬', sub:'5.0L 크로스플레인', angles:even(8), amps:[1,.55,.85,.62,.92,.7,1,.5], idle:750, redline:7500, decayMs:2.6, rough:.35, jitter:.08, timing:.03, pipeMs:7, fb:.55, res:[[75,3,.8],[150,4,.5],[320,3,.25]], dry:.6, bright:2600, drive:1.6, pops:1, turbo:false, gears:6, vmax:280},
   v8f:   {name:'V8 이탈리안', sub:'4.5L 플랫플레인', angles:even(8), amps:[1,.95,1,.93,1,.96,1,.94], idle:1000, redline:9000, decayMs:1.6, rough:.25, jitter:.05, timing:.02, pipeMs:4, fb:.5, res:[[180,3,.5],[420,3,.4],[900,2,.3]], dry:.5, bright:5000, drive:2, pops:1, turbo:false, gears:7, vmax:320},
   v10:   {name:'V10 슈퍼카', sub:'5.2L 자연흡기', angles:even(10), amps:[1,.92,1,.9,1,.93,1,.91,1,.94], idle:1000, redline:8700, decayMs:1.5, rough:.3, jitter:.05, timing:.02, pipeMs:4.5, fb:.5, res:[[160,3,.5],[500,3,.4],[1100,2,.3]], dry:.5, bright:5500, drive:2.2, pops:1.2, turbo:false, gears:7, vmax:325},
@@ -130,7 +130,7 @@ class Engine extends AudioWorkletProcessor {
     this.port.onmessage = (m) => { if (m.data.def) this.set(m.data.def); if (m.data.bov) this.bov = 1; }; }
   set(d){ this.d = d; this.thr = d.angles.map(a => a/720); this.res = d.res.map(([f,q,g]) => Object.assign(bp(f,q), {g}));
     this.D = Math.max(1, Math.round(d.pipeMs*sampleRate/1000)); this.dec = Math.exp(-1000/(d.decayMs*sampleRate));
-    this.bovF = bp(2400, 2); this.rpm = d.idle; this.idx = 0; this.cyc = Math.ceil(this.pos); this.next = this.cyc; }
+    this.bovF = bp(2400, 2); this.pres = bp(2800, 1.2); this.rpm = d.idle; this.idx = 0; this.cyc = Math.ceil(this.pos); this.next = this.cyc; }
   process(_, outputs, p){
     const d = this.d, L = outputs[0][0], R = outputs[0][1];
     if (!d) return true;
@@ -139,10 +139,10 @@ class Engine extends AudioWorkletProcessor {
     const rf0 = Math.min(1, this.rpm / d.redline);
     const fc = d.bright * (0.35 + 0.65*rf0) * (0.6 + 0.4*this.load);
     const k = 1 - Math.exp(-TAU*fc/sr);
-    const popP = popsOn * ov * d.pops * 12 / sr;
+    const popP = popsOn * ov * d.pops * 32 / sr;
     for (let i = 0; i < L.length; i++){
-      this.rpm += (rpmT - this.rpm) * 0.0015;
-      this.load += (loadT - this.load) * 0.001;
+      this.rpm += (rpmT - this.rpm) * 0.0025;
+      this.load += (loadT - this.load) * 0.002;
       this.pos += this.rpm / 120 / sr;
       let guard = 0;
       while (this.pos >= this.next && guard++ < 4){
@@ -154,8 +154,8 @@ class Engine extends AudioWorkletProcessor {
       const nz = Math.random()*2 - 1;
       let x = 1.6 * this.e * (1 - d.rough + d.rough*nz);
       this.e *= this.dec;
-      if (popP > 0 && this.rpm > d.redline*0.28 && Math.random() < popP) this.pop = 0.6 + Math.random()*1.2;
-      x += this.pop * nz; this.pop *= 0.996;
+      if (popP > 0 && this.rpm > d.redline*0.18 && Math.random() < popP) this.pop = 0.9 + Math.random()*1.8;
+      x += this.pop * nz; this.pop *= 0.9965;
       const xc = x - this.dcx + 0.995*this.dcy; this.dcx = x; this.dcy = xc;   // 펄스 중심 맞춤(직류 제거)
       const y = xc + d.fb * buf[(this.w - D + 8192) & 8191];
       buf[this.w] = y; this.w = (this.w + 1) & 8191;
@@ -163,6 +163,7 @@ class Engine extends AudioWorkletProcessor {
       for (const f of this.res) s += run(f, y) * f.g;
       this.lp += (s - this.lp) * k;
       let o = Math.tanh(this.lp * d.drive * (0.7 + 0.6*this.load));
+      if (d.presence) o = Math.tanh(o + run(this.pres, o) * d.presence * (0.4 + 0.6*rf0));   // 고회전 '찢어지는' 음 강조 후 다시 눌러줌
       if (d.turbo){
         this.ph += (1800 + boost*5500) / sr; if (this.ph > 1) this.ph -= 1;
         o += Math.sin(TAU*this.ph) * boost * boost * 0.06;
@@ -199,7 +200,7 @@ function setupGears(){ const n = E.gears, v1 = E.vmax*0.3/3.6, vn = E.vmax/3.6;
 setupGears();
 
 // ---------- GPS ----------
-const G = { last:null, fixAt:0, a:0, state:'대기', acc:null, watch:null, poll:null };
+const G = { last:null, fixAt:0, a:0, state:'대기', acc:null, watch:null, poll:null, pending:false, hist:[] };
 function hav(a, b){ const R = 6371000, r = Math.PI/180, dLat = (b.lat-a.lat)*r, dLon = (b.lon-a.lon)*r;
   const h = Math.sin(dLat/2)**2 + Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLon/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
 function onFix(p){
@@ -208,8 +209,11 @@ function onFix(p){
   if (L && t <= L.t) return;                       // 같은 위치 재전송은 무시
   let v = p.coords.speed;
   if (v == null || isNaN(v) || v < 0) v = L ? hav(L, {lat, lon}) / Math.max(0.2, (t - L.t)/1000) : 0;
-  if (v < 0.4) v = 0;
-  if (L){ const dt = (t - L.t)/1000; if (dt > 0.15 && dt < 5) G.a += (clamp((v - L.v)/dt, -9, 9) - G.a) * 0.6; }
+  if (v < 0.25) v = 0;   // 1km/h 부터 출발로 인정
+  // 가속도: 0.5초 이상 떨어진 이전 값과 비교(테슬라 속도는 1km/h 단위라 너무 짧으면 튐)
+  G.hist = G.hist.filter(h => t - h.t < 2000); G.hist.push({t, v});
+  const ref = [...G.hist].reverse().find(h => t - h.t >= 500);
+  if (ref) G.a += (clamp((v - ref.v)/((t - ref.t)/1000), -9, 9) - G.a) * 0.75;
   G.last = {t, v, lat, lon}; G.fixAt = performance.now(); G.acc = p.coords.accuracy; G.state = 'ok';
 }
 function onGpsErr(e){ G.state = e && e.code === 1 ? 'denied' : 'err'; }
@@ -217,8 +221,11 @@ function startGps(){
   if (!navigator.geolocation){ G.state = 'none'; return; }
   if (G.watch == null) G.watch = navigator.geolocation.watchPosition(onFix, onGpsErr, {enableHighAccuracy:true, maximumAge:0, timeout:15000});
   // 테슬라는 정차 중 위치 이벤트를 멈춤: 2.5초 넘게 조용하면 직접 물어봄
-  if (!G.poll) G.poll = setInterval(() => { if (performance.now() - G.fixAt > 2500)
-    navigator.geolocation.getCurrentPosition(onFix, () => {}, {enableHighAccuracy:true, maximumAge:0, timeout:2000}); }, 1000);
+  // 테슬라 위치 이벤트는 1초에 한 번뿐이고 정차 중엔 멈춤: 초당 4번 직접 물어봐서 출발·가속을 빨리 잡음(한 번에 하나씩)
+  if (!G.poll) G.poll = setInterval(() => { if (G.pending || performance.now() - G.fixAt < 200) return;
+    G.pending = true;
+    navigator.geolocation.getCurrentPosition((p) => { G.pending = false; onFix(p); }, () => { G.pending = false; },
+      {enableHighAccuracy:true, maximumAge:0, timeout:1500}); }, 250);
 }
 function gpsSpeed(){
   if (!G.last) return {v:0, a:0};
@@ -257,10 +264,10 @@ function tick(){
     v = S.v = Math.max(0, S.v + a*dt);
   } else ({v, a} = gpsSpeed());
   S.v = v; S.a = a;
-  const aRef = aMaxAt(v) * (0.95 - prefs.sens*0.08);   // 이 속도에서 내 차 최대 가속의 몇 % 면 풀 부하인지 (민감도 5 = 55%)
+  const aRef = aMaxAt(v) * (0.85 - prefs.sens*0.08);   // 이 속도에서 내 차 최대 가속의 몇 % 면 풀 부하인지 (민감도 5 = 45%)
 
   let load = prefs.mode === 'sim' && S.gas ? 1 : Math.sqrt(clamp(a / aRef, 0, 1));   // 제곱근: 살살 밟아도 소리가 반응
-  let overrun = (a < -0.35 && v > 2) ? clamp(-a/2.5, 0.25, 1) : 0;
+  let overrun = (a < -0.2 && v > 2) ? clamp(-a/1.8, 0.4, 1) : 0;   // 살짝만 떼도 팝콘
   if (v > 2 && !overrun) load = Math.max(load, 0.12 + Math.min(0.15, v/400));     // 정속 주행도 약간의 부하
 
   // 기어
@@ -277,13 +284,13 @@ function tick(){
 
   // 정차 중 레브
   if (v < 0.5 && prefs.mode === 'gps'){
-    if (S.revHeld){ S.revRpm += (E.redline*0.9 - S.revRpm) * dt * 3.5; load = 1; overrun = 0; }
-    else { const before = S.revRpm; S.revRpm = Math.max(E.idle, S.revRpm - E.redline*0.55*dt); if (before > E.idle*1.3){ overrun = 1; load = 0; } }
+    if (S.revHeld){ S.revRpm += (E.redline*0.92 - S.revRpm) * dt * 6; load = 1; overrun = 0; }
+    else { const before = S.revRpm; S.revRpm = Math.max(E.idle, S.revRpm - E.redline*0.8*dt); if (before > E.idle*1.3){ overrun = 1; load = 0; } }
     rpm = Math.max(rpm, S.revRpm);
   } else S.revRpm = rpm;
 
-  if (S.shiftCut > 0){ S.shiftCut -= dt; load *= 0.1; }
-  if (rpm >= E.redline){ rpm = E.redline - Math.random()*E.redline*0.04; load *= 0.4; }   // 리미터
+  if (S.shiftCut > 0){ S.shiftCut -= dt; load *= 0.1; overrun = Math.max(overrun, 0.7); }   // 변속 순간 팝
+  if (rpm >= E.redline){ rpm = E.redline - Math.random()*E.redline*0.04; load *= 0.4; overrun = Math.max(overrun, 0.6); }   // 리미터
 
   // 터보 + 블로우오프
   const boostT = E.turbo ? load * clamp((rpm/E.redline - 0.25)/0.35, 0, 1) : 0;
@@ -295,9 +302,9 @@ function tick(){
   S.vShown += (v - S.vShown) * Math.min(1, dt*5);
   if (S.node && S.on){
     const P = S.node.parameters, t = S.ctx.currentTime;
-    P.get('rpm').setTargetAtTime(rpm, t, 0.03);
-    P.get('load').setTargetAtTime(load, t, 0.04);
-    P.get('overrun').setTargetAtTime(overrun, t, 0.05);
+    P.get('rpm').setTargetAtTime(rpm, t, 0.015);
+    P.get('load').setTargetAtTime(load, t, 0.02);
+    P.get('overrun').setTargetAtTime(overrun, t, 0.02);
     P.get('boost').setTargetAtTime(S.boost, t, 0.05);
     P.get('pops').setValueAtTime(prefs.pops ? 1 : 0, t);
   }
