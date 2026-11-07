@@ -1,5 +1,5 @@
 // 앱의 실제 합성 코드로 엔진별 소리를 만들고 스펙트럼(음색 지문)을 비교한다.
-// 1) 같은 rpm(5000)·풀부하에서 각 엔진 1초 → 로그 주파수 대역 에너지(60~10kHz, 48개)
+// 1) 같은 rpm(5000, HI=1 이면 레드라인 92%)·풀부하에서 각 엔진 1초 → 로그 주파수 대역 에너지(60~10kHz, 48개)
 // 2) 엔진끼리 상관계수(1=완전 같음) → 평균·최대
 // 3) 소리 특성: 밝기(스펙트럼 중심), 클리핑 정도(crest factor)
 import fs from 'node:fs';
@@ -27,7 +27,7 @@ function spectrum(x){ const n = 8192, P = new Float64Array(n/2); let frames = 0;
 const corr = (a, b) => { const ma = a.reduce((s,v)=>s+v,0)/a.length, mb = b.reduce((s,v)=>s+v,0)/b.length; let n=0, da=0, db=0; a.forEach((v,i)=>{ n+=(v-ma)*(b[i]-mb); da+=(v-ma)**2; db+=(b[i]-mb)**2; }); return n/Math.sqrt(da*db); };
 const ids = process.argv.slice(3).length ? process.argv.slice(3) : Object.keys(ENGINES);
 const S = {}, info = {};
-for (const id of ids){ const E = ENGINES[id], x = render(E, Math.min(5000, E.redline*0.8), 1, 1.5); S[id] = spectrum(x);
+for (const id of ids){ const E = ENGINES[id], x = render(E, process.env.HI ? E.redline*0.92 : Math.min(5000, E.redline*0.8), 1, 1.5); S[id] = spectrum(x);
   let pk = 0, rms = 0; for (const v of x){ pk = Math.max(pk, Math.abs(v)); rms += v*v; } rms = Math.sqrt(rms/x.length);
   info[id] = `밝기 ${Math.round(S[id].centroid)}Hz, 크레스트 ${(20*Math.log10(pk/rms)).toFixed(1)}dB`; }
 const pairs = []; for (let i = 0; i < ids.length; i++) for (let j = i+1; j < ids.length; j++) pairs.push([ids[i]+'~'+ids[j], corr(S[ids[i]].db, S[ids[j]].db)]);
