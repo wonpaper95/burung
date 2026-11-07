@@ -28,9 +28,10 @@ button:active{transform:scale(.98)}
 #power.on{background:#1d242c;border-color:var(--accent);color:var(--accent)}
 .seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .seg button[aria-pressed=true],.engines button[aria-pressed=true]{border-color:var(--accent);background:#2a1712}
-.engines{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.engines{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+@media (max-width:520px){.engines{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .engines button{text-align:left;min-height:50px;padding:5px 10px}
-.engines b{display:block;font-size:16px}.engines small{color:var(--dim);font-size:12px;display:block}
+.engines b{display:block;font-size:15px}.engines small{color:var(--dim);font-size:12px;display:block}
 .row{display:flex;align-items:center;gap:12px}
 .row label{width:72px;color:var(--dim);font-size:15px;flex:none}
 .row output{width:46px;text-align:right;flex:none}
@@ -56,6 +57,7 @@ footer{color:var(--dim);font-size:13px;text-align:center}footer a{color:var(--di
     <div class="status">
       <span class="pill"><span id="gpsDot" class="dot"></span><span id="gpsText">GPS 대기</span></span>
       <span class="pill">엔진 <b id="engName">-</b></span>
+      <span class="pill">내 차 <b>모델 Y L 맞춤</b></span>
     </div>
   </section>
 
@@ -102,6 +104,8 @@ footer{color:var(--dim);font-size:13px;text-align:center}footer a{color:var(--di
 // res: 배기 공명 [Hz, Q, 세기], gearsV: 각 기어에서 레드라인일 때 속도(km/h)
 const even = (n) => Array.from({length:n}, (_, i) => i * 720 / n);
 const ENGINES = {
+  // 6.5L 65° V12, 60° 간격 균등 점화, 8,900rpm, 7단 DCT. 높고 금속성 있는 고회전 비명 쪽으로 튜닝
+  f812:  {name:'812 슈퍼패스트', sub:'6.5L V12 자연흡기', angles:even(12), amps:[1,.97,1,.96,1,.98,1,.97,1,.96,1,.98], idle:1000, redline:8900, decayMs:1.1, rough:.22, jitter:.035, timing:.012, pipeMs:3, fb:.5, res:[[260,3,.45],[880,4,.45],[1750,3,.35],[3200,2,.2]], dry:.45, bright:8000, drive:2.2, pops:.9, turbo:false, gears:7, vmax:340, gearKmh:[82,115,155,196,245,300,340]},
   v8m:   {name:'V8 머슬', sub:'5.0L 크로스플레인', angles:even(8), amps:[1,.55,.85,.62,.92,.7,1,.5], idle:750, redline:7500, decayMs:2.6, rough:.35, jitter:.08, timing:.03, pipeMs:7, fb:.55, res:[[75,3,.8],[150,4,.5],[320,3,.25]], dry:.6, bright:2600, drive:1.6, pops:1, turbo:false, gears:6, vmax:280},
   v8f:   {name:'V8 이탈리안', sub:'4.5L 플랫플레인', angles:even(8), amps:[1,.95,1,.93,1,.96,1,.94], idle:1000, redline:9000, decayMs:1.6, rough:.25, jitter:.05, timing:.02, pipeMs:4, fb:.5, res:[[180,3,.5],[420,3,.4],[900,2,.3]], dry:.5, bright:5000, drive:2, pops:1, turbo:false, gears:7, vmax:320},
   v10:   {name:'V10 슈퍼카', sub:'5.2L 자연흡기', angles:even(10), amps:[1,.92,1,.9,1,.93,1,.91,1,.94], idle:1000, redline:8700, decayMs:1.5, rough:.3, jitter:.05, timing:.02, pipeMs:4.5, fb:.5, res:[[160,3,.5],[500,3,.4],[1100,2,.3]], dry:.5, bright:5500, drive:2.2, pops:1.2, turbo:false, gears:7, vmax:325},
@@ -178,14 +182,20 @@ const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const store = { get(){ try { return JSON.parse(localStorage.getItem('burung') || '{}'); } catch { return {}; } },
                 set(v){ try { localStorage.setItem('burung', JSON.stringify(v)); } catch {} } };
-const prefs = Object.assign({engine:'v8m', vol:70, sens:5, pops:true, mode:'gps'}, store.get());
-if (!ENGINES[prefs.engine]) prefs.engine = 'v8m';
+const prefs = Object.assign({engine:'f812', vol:70, sens:5, pops:true, mode:'gps'}, store.get());
+if (!ENGINES[prefs.engine]) prefs.engine = 'f812';
 const S = { on:false, ctx:null, node:null, master:null, v:0, vShown:0, a:0, gear:0, rpm:800, load:0, overrun:0, boost:0,
             shiftCut:0, lastShift:0, gas:false, brake:false, revHeld:false, revRpm:0, prevLoad:0, wake:null };
 let E = ENGINES[prefs.engine];
 let gearV = [];
+// 내 차: 테슬라 모델 Y L (2026, 6인승 듀얼모터) — 340kW · 2,088kg · 0→100 4.5초 · 최고 201km/h
+// 사람 2~3명 탄 무게로 계산. 전기차는 저속에선 접지력, 고속에선 출력이 가속 한계.
+const CAR = {name:'모델 Y L', kw:340, kg:2088 + 180, vmax:201, a0:7.0};
+const aMaxAt = (v) => Math.min(CAR.a0, 0.8 * CAR.kw*1000 / (CAR.kg * Math.max(v, 1)));
 function setupGears(){ const n = E.gears, v1 = E.vmax*0.3/3.6, vn = E.vmax/3.6;
-  gearV = Array.from({length:n}, (_, i) => v1 * Math.pow(vn/v1, i/(n-1))); S.gear = 0; }
+  const scale = Math.min(1, CAR.vmax*1.25 / E.vmax);   // 내 차 최고속도 안에서 모든 기어를 쓰도록 압축
+  gearV = (E.gearKmh ? E.gearKmh.map(k => k/3.6) : Array.from({length:n}, (_, i) => v1 * Math.pow(vn/v1, i/(n-1)))).map(v => v*scale);
+  S.gear = 0; }
 setupGears();
 
 // ---------- GPS ----------
@@ -241,21 +251,21 @@ function applyVolume(){ if (!S.master) return;
 let lastT = performance.now();
 function tick(){
   const now = performance.now(), dt = Math.min(0.1, (now - lastT)/1000); lastT = now;
-  const aRef = 3.6 - prefs.sens * 0.3;   // 민감도 높을수록 살짝만 밟아도 풀 부하
   let v, a;
   if (prefs.mode === 'sim'){
-    a = S.gas ? 3.2 : S.brake ? -7 : (S.v > 0 ? -0.7 - S.v*0.012 : 0);
+    a = S.gas ? aMaxAt(S.v) * 0.85 : S.brake ? -7 : (S.v > 0 ? -0.7 - S.v*0.012 : 0);
     v = S.v = Math.max(0, S.v + a*dt);
   } else ({v, a} = gpsSpeed());
   S.v = v; S.a = a;
+  const aRef = aMaxAt(v) * (0.95 - prefs.sens*0.08);   // 이 속도에서 내 차 최대 가속의 몇 % 면 풀 부하인지 (민감도 5 = 55%)
 
-  let load = prefs.mode === 'sim' && S.gas ? 1 : clamp(a / aRef, 0, 1);
+  let load = prefs.mode === 'sim' && S.gas ? 1 : Math.sqrt(clamp(a / aRef, 0, 1));   // 제곱근: 살살 밟아도 소리가 반응
   let overrun = (a < -0.35 && v > 2) ? clamp(-a/2.5, 0.25, 1) : 0;
   if (v > 2 && !overrun) load = Math.max(load, 0.12 + Math.min(0.15, v/400));     // 정속 주행도 약간의 부하
 
   // 기어
   const rpmAt = (g) => E.redline * v / gearV[g];
-  const up = E.redline * (0.42 + 0.53*load), down = Math.max(E.idle*1.5, E.redline * (0.22 + 0.25*load));
+  const up = E.redline * (0.32 + 0.63*Math.pow(load, 2.5)), /* 살살 = 일찍 변속, 꾹 = 레드라인까지 */ down = Math.max(E.idle*1.5, E.redline * (0.22 + 0.25*load));
   if (now - S.lastShift > 600){
     if (S.gear < E.gears-1 && rpmAt(S.gear) > (overrun ? E.redline*0.97 : up)){ /* 감속 중엔 기어 유지(엔진브레이크·팝콘) */ S.gear++; S.lastShift = now; S.shiftCut = 0.13; }
     else if (S.gear > 0 && rpmAt(S.gear) < down && rpmAt(S.gear-1) < E.redline*0.88){ S.gear--; S.lastShift = now; if (overrun) overrun = 1; }
