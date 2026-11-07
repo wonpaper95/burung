@@ -106,6 +106,8 @@ const even = (n) => Array.from({length:n}, (_, i) => i * 720 / n);
 const ENGINES = {
   // 6.5L 65° V12, 60° 간격 균등 점화, 8,900rpm, 7단 DCT. 높고 금속성 있는 고회전 비명 쪽으로 튜닝
   f812:  {name:'812 슈퍼패스트', sub:'6.5L V12 자연흡기', angles:even(12), amps:[1,.97,1,.96,1,.98,1,.97,1,.96,1,.98], idle:1000, redline:8900, decayMs:.5, rough:.28, jitter:.035, timing:.012, pipeMs:3, fb:.5, res:[[260,3,.3],[880,4,.45],[1750,3,.5],[3200,2,.45]], dry:.45, bright:16000, drive:2.9, presence:1.6, pops:1.8, turbo:false, gears:7, vmax:340, gearKmh:[82,115,155,196,245,300,340]},
+  // 6.5L 60° V12, 8,700rpm, 7단 ISR 싱글클러치(변속이 거칠고 '쾅' 하는 백파이어로 유명). 812보다 거칠고 낮게 짖는 소리
+  svj:   {name:'아벤타도르 SVJ', sub:'6.5L V12 · ISR 변속', angles:even(12), amps:[1,.9,1,.88,1,.92,1,.89,1,.9,1,.87], idle:950, redline:8700, decayMs:.8, rough:.4, jitter:.05, timing:.02, pipeMs:3.6, fb:.55, res:[[190,3,.55],[620,3,.45],[1500,3,.45],[3000,2,.35]], dry:.55, bright:8500, drive:3.6, presence:.55, pops:2.4, shiftBang:true, shiftCutS:.2, turbo:false, gears:7, vmax:350, gearKmh:[90,125,165,210,255,305,350]},
   v8m:   {name:'V8 머슬', sub:'5.0L 크로스플레인', angles:even(8), amps:[1,.55,.85,.62,.92,.7,1,.5], idle:750, redline:7500, decayMs:2.6, rough:.35, jitter:.08, timing:.03, pipeMs:7, fb:.55, res:[[75,3,.8],[150,4,.5],[320,3,.25]], dry:.6, bright:2600, drive:1.6, pops:1, turbo:false, gears:6, vmax:280},
   v8f:   {name:'V8 이탈리안', sub:'4.5L 플랫플레인', angles:even(8), amps:[1,.95,1,.93,1,.96,1,.94], idle:1000, redline:9000, decayMs:1.6, rough:.25, jitter:.05, timing:.02, pipeMs:4, fb:.5, res:[[180,3,.5],[420,3,.4],[900,2,.3]], dry:.5, bright:5000, drive:2, pops:1, turbo:false, gears:7, vmax:320},
   v10:   {name:'V10 슈퍼카', sub:'5.2L 자연흡기', angles:even(10), amps:[1,.92,1,.9,1,.93,1,.91,1,.94], idle:1000, redline:8700, decayMs:1.5, rough:.3, jitter:.05, timing:.02, pipeMs:4.5, fb:.5, res:[[160,3,.5],[500,3,.4],[1100,2,.3]], dry:.5, bright:5500, drive:2.2, pops:1.2, turbo:false, gears:7, vmax:325},
@@ -127,7 +129,7 @@ class Engine extends AudioWorkletProcessor {
   static get parameterDescriptors(){ return ['rpm','load','overrun','boost','pops'].map(n => ({name:n, defaultValue:0, automationRate:'k-rate'})); }
   constructor(){ super(); this.d=null; this.buf=new Float32Array(8192); this.w=0; this.pos=0; this.cyc=0; this.idx=0; this.next=0;
     this.e=0; this.pop=0; this.bov=0; this.ph=0; this.lp=0; this.dcx=0; this.dcy=0; this.rpm=800; this.load=0;
-    this.port.onmessage = (m) => { if (m.data.def) this.set(m.data.def); if (m.data.bov) this.bov = 1; }; }
+    this.port.onmessage = (m) => { if (m.data.def) this.set(m.data.def); if (m.data.bov) this.bov = 1; if (m.data.bang) this.pop = 2.2 + Math.random(); }; }
   set(d){ this.d = d; this.thr = d.angles.map(a => a/720); this.res = d.res.map(([f,q,g]) => Object.assign(bp(f,q), {g}));
     this.D = Math.max(1, Math.round(d.pipeMs*sampleRate/1000)); this.dec = Math.exp(-1000/(d.decayMs*sampleRate));
     this.bovF = bp(2400, 2); this.pres = bp(2800, 1.2); this.rpm = d.idle; this.idx = 0; this.cyc = Math.ceil(this.pos); this.next = this.cyc; }
@@ -274,7 +276,7 @@ function tick(){
   const rpmAt = (g) => E.redline * v / gearV[g];
   const up = E.redline * (0.32 + 0.63*Math.pow(load, 2.5)), /* 살살 = 일찍 변속, 꾹 = 레드라인까지 */ down = Math.max(E.idle*1.5, E.redline * (0.22 + 0.25*load));
   if (now - S.lastShift > 600){
-    if (S.gear < E.gears-1 && rpmAt(S.gear) > (overrun ? E.redline*0.97 : up)){ /* 감속 중엔 기어 유지(엔진브레이크·팝콘) */ S.gear++; S.lastShift = now; S.shiftCut = 0.13; }
+    if (S.gear < E.gears-1 && rpmAt(S.gear) > (overrun ? E.redline*0.97 : up)){ /* 감속 중엔 기어 유지(엔진브레이크·팝콘) */ S.gear++; S.lastShift = now; S.shiftCut = E.shiftCutS || 0.13; if (E.shiftBang && prefs.pops && load > 0.6) S.node?.port.postMessage({bang:1}); }
     else if (S.gear > 0 && rpmAt(S.gear) < down && rpmAt(S.gear-1) < E.redline*0.88){ S.gear--; S.lastShift = now; if (overrun) overrun = 1; }
   }
   if (v < 0.5) S.gear = 0;
